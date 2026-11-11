@@ -13,6 +13,7 @@ Supply configuration through the environment or the deployment Secret. Do not co
 - `RabbitMQ__Host`, `RabbitMQ__Username`, `RabbitMQ__Password`, `RabbitMQ__EmailCommandQueue`: authenticated broker connection and durable versioned command queue.
 - `Cors__UiOrigin` and `CompareShopUI__BaseUrl`: the exact UI origin and configured link base.
 - `Turnstile__Enabled`, `Turnstile__Secret`, and `Turnstile__AllowedHostnames`. The `example.com` test hostname exists only in Development configuration. `Turnstile__AllowUnavailableInDev` defaults to false and only bypasses siteverify transport failures in Development.
+- `SecurityTiming__MinimumDurationMs` (default `250`) and `SecurityTiming__JitterMs` (default `25`) pad register, login, and forgot-password responses to reduce account-enumeration timing differences.
 
 The app does not run schema changes at startup. Apply the checked-in EF migrations using the deployment migration identity, then run the app with its least-privilege runtime database credential.
 

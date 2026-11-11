@@ -49,6 +49,7 @@ var uiOrigin = builder.Configuration["Cors:UiOrigin"];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => { if (!string.IsNullOrWhiteSpace(uiOrigin)) p.WithOrigins(uiOrigin).AllowAnyHeader().AllowAnyMethod().AllowCredentials(); }));
 builder.Services.AddHealthChecks();
 var app = builder.Build();
+app.UseMiddleware<ResponseTimingMiddleware>();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
