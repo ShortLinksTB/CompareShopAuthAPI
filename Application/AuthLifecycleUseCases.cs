@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CompareShopAuthAPI.Application;
 
 public interface IVerifyEmailUseCase { Task<IResult> ExecuteAsync(HttpContext http, VerificationRequest request, CancellationToken cancellationToken); }
-public sealed class VerifyEmailUseCase(AuthDbContext db, UserManager<AuthUser> users, TimeProvider clock) : IVerifyEmailUseCase
+public sealed class VerifyEmailUseCase(AuthDbContext db, IAuthIdentityPort users, TimeProvider clock) : IVerifyEmailUseCase
 {
     public async Task<IResult> ExecuteAsync(HttpContext http, VerificationRequest request, CancellationToken cancellationToken)
     {
@@ -38,7 +38,7 @@ public sealed class VerifyEmailUseCase(AuthDbContext db, UserManager<AuthUser> u
 }
 
 public interface IResendVerificationUseCase { Task<IResult> ExecuteAsync(HttpContext http, EmailRequest request, CancellationToken cancellationToken); }
-public sealed class ResendVerificationUseCase(UserManager<AuthUser> users, AuthDbContext db, AuthEmailOutbox outbox, DistributedThrottle throttle, TurnstileVerifier captcha, TimeProvider clock, IConfiguration configuration, IHostEnvironment environment) : IResendVerificationUseCase
+public sealed class ResendVerificationUseCase(IAuthIdentityPort users, AuthDbContext db, IAuthEmailOutboxPort outbox, IAuthRateLimitPort throttle, ICaptchaVerificationPort captcha, TimeProvider clock, IConfiguration configuration, IHostEnvironment environment) : IResendVerificationUseCase
 {
     public async Task<IResult> ExecuteAsync(HttpContext http, EmailRequest request, CancellationToken cancellationToken)
     {
@@ -74,7 +74,7 @@ public interface IPasswordRecoveryUseCase
     Task<IResult> ResetAsync(HttpContext http, ResetPasswordRequest request, CancellationToken cancellationToken);
 }
 
-public sealed class PasswordRecoveryUseCase(UserManager<AuthUser> users, AuthDbContext db, AuthEmailOutbox outbox, DistributedThrottle throttle, TurnstileVerifier captcha, PasswordPolicy policy, IConfiguration configuration, TimeProvider clock, IHostEnvironment environment) : IPasswordRecoveryUseCase
+public sealed class PasswordRecoveryUseCase(IAuthIdentityPort users, AuthDbContext db, IAuthEmailOutboxPort outbox, IAuthRateLimitPort throttle, ICaptchaVerificationPort captcha, PasswordPolicy policy, IConfiguration configuration, TimeProvider clock, IHostEnvironment environment) : IPasswordRecoveryUseCase
 {
     public async Task<IResult> ForgotAsync(HttpContext http, EmailRequest request, CancellationToken cancellationToken)
     {
@@ -167,7 +167,7 @@ public sealed class PasswordRecoveryUseCase(UserManager<AuthUser> users, AuthDbC
 }
 
 public interface IPasswordChangeUseCase { Task<IResult> ExecuteAsync(HttpContext http, ChangePasswordRequest request, CancellationToken cancellationToken); }
-public sealed class PasswordChangeUseCase(UserManager<AuthUser> users, AuthDbContext db, AuthEmailOutbox outbox, PasswordPolicy policy, TimeProvider clock) : IPasswordChangeUseCase
+public sealed class PasswordChangeUseCase(IAuthIdentityPort users, AuthDbContext db, IAuthEmailOutboxPort outbox, PasswordPolicy policy, TimeProvider clock) : IPasswordChangeUseCase
 {
     public async Task<IResult> ExecuteAsync(HttpContext http, ChangePasswordRequest request, CancellationToken cancellationToken)
     {
@@ -200,7 +200,7 @@ public interface IRefreshSessionUseCase
     Task<IResult> LogoutAsync(HttpContext http, CancellationToken cancellationToken);
 }
 
-public sealed class RefreshSessionUseCase(AuthDbContext db, UserManager<AuthUser> users, AccessTokenIssuer issuer, TimeProvider clock, IConfiguration configuration) : IRefreshSessionUseCase
+public sealed class RefreshSessionUseCase(AuthDbContext db, IAuthIdentityPort users, AccessTokenIssuer issuer, TimeProvider clock, IConfiguration configuration) : IRefreshSessionUseCase
 {
     public async Task<IResult> RefreshAsync(HttpContext http, CancellationToken cancellationToken)
     {

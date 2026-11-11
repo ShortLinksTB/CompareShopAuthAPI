@@ -1,8 +1,9 @@
 using CompareShopAuthAPI.Security;
+using CompareShopAuthAPI.Application;
 
 namespace CompareShopAuthAPI.Data;
 
-public sealed class AuthEmailOutbox(AuthDbContext db, SecretPayloadProtector protector, TimeProvider clock)
+public sealed class AuthEmailOutbox(AuthDbContext db, SecretPayloadProtector protector, TimeProvider clock) : IAuthEmailOutboxPort
 {
     public void Enqueue(string recipient, string template, Dictionary<string, string> data)
     {

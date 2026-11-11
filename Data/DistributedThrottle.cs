@@ -1,10 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using CompareShopAuthAPI.Application;
 
 namespace CompareShopAuthAPI.Data;
 
-public sealed class DistributedThrottle(AuthDbContext db, IConfiguration configuration, TimeProvider clock)
+public sealed class DistributedThrottle(AuthDbContext db, IConfiguration configuration, TimeProvider clock) : IAuthRateLimitPort
 {
     public async Task<bool> TryConsumeAsync(string category, string value, int limit, TimeSpan window, CancellationToken cancellationToken)
     {

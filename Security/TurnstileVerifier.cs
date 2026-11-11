@@ -1,11 +1,12 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using CompareShopAuthAPI.Application;
 
 namespace CompareShopAuthAPI.Security;
 
 public sealed record CaptchaResult(bool Accepted, string? FailureCode = null);
 
-public sealed class TurnstileVerifier(IHttpClientFactory clients, IConfiguration configuration, IWebHostEnvironment environment, ILogger<TurnstileVerifier> logger)
+public sealed class TurnstileVerifier(IHttpClientFactory clients, IConfiguration configuration, IWebHostEnvironment environment, ILogger<TurnstileVerifier> logger) : ICaptchaVerificationPort
 {
     private const string VerifyEndpoint = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 

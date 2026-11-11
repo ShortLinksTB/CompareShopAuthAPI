@@ -27,6 +27,12 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddSingleton<SecretPayloadProtector>();
 builder.Services.AddScoped<AuthEmailOutbox>();
+builder.Services.AddScoped<IAuthEmailOutboxPort>(services => services.GetRequiredService<AuthEmailOutbox>());
+builder.Services.AddScoped<DistributedThrottle>();
+builder.Services.AddScoped<IAuthRateLimitPort>(services => services.GetRequiredService<DistributedThrottle>());
+builder.Services.AddScoped<TurnstileVerifier>();
+builder.Services.AddScoped<ICaptchaVerificationPort>(services => services.GetRequiredService<TurnstileVerifier>());
+builder.Services.AddScoped<IAuthIdentityPort, AuthIdentityAdapter>();
 builder.Services.AddScoped<IRegisterAccountUseCase, RegisterAccountUseCase>();
 builder.Services.AddScoped<ILoginUseCase, LoginUseCase>();
 builder.Services.AddScoped<IVerifyEmailUseCase, VerifyEmailUseCase>();
@@ -36,11 +42,9 @@ builder.Services.AddScoped<IPasswordChangeUseCase, PasswordChangeUseCase>();
 builder.Services.AddScoped<IRefreshSessionUseCase, RefreshSessionUseCase>();
 builder.Services.AddScoped<EmailOutboxBatchDispatcher>();
 builder.Services.AddSingleton<IEmailMessagePublisher, RabbitMqEmailMessagePublisher>();
-builder.Services.AddScoped<DistributedThrottle>();
 builder.Services.AddHostedService<EmailOutboxPublisher>();
 builder.Services.AddHostedService<ThrottleBucketRetentionService>();
 builder.Services.AddHttpClient(nameof(TurnstileVerifier), client => client.Timeout = TimeSpan.FromSeconds(5));
-builder.Services.AddScoped<TurnstileVerifier>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
 builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme).Configure<AccessTokenIssuer>((o, issuer) =>
 {

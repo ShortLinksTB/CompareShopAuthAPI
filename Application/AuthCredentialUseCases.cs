@@ -13,12 +13,12 @@ public interface IRegisterAccountUseCase
 }
 
 public sealed class RegisterAccountUseCase(
-    UserManager<AuthUser> users,
+    IAuthIdentityPort users,
     AuthDbContext db,
-    AuthEmailOutbox outbox,
-    DistributedThrottle throttle,
+    IAuthEmailOutboxPort outbox,
+    IAuthRateLimitPort throttle,
     PasswordPolicy policy,
-    TurnstileVerifier captcha,
+    ICaptchaVerificationPort captcha,
     TimeProvider clock,
     IConfiguration configuration,
     IHostEnvironment environment) : IRegisterAccountUseCase

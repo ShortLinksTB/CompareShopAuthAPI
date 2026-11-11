@@ -13,13 +13,12 @@ public interface ILoginUseCase
 }
 
 public sealed class LoginUseCase(
-    UserManager<AuthUser> users,
-    SignInManager<AuthUser> signIn,
+    IAuthIdentityPort users,
     UnknownUserCredential unknownUser,
     AuthDbContext db,
-    DistributedThrottle throttle,
+    IAuthRateLimitPort throttle,
     AccessTokenIssuer issuer,
-    TurnstileVerifier captcha,
+    ICaptchaVerificationPort captcha,
     TimeProvider clock,
     IConfiguration configuration,
     IHostEnvironment environment) : ILoginUseCase
@@ -39,7 +38,7 @@ public sealed class LoginUseCase(
         var normalized = users.NormalizeEmail(emailKey);
         var user = normalized is null ? null : await users.FindByEmailAsync(emailKey);
         if (user is null) unknownUser.Verify(password);
-        var signInResult = user is null ? null : await signIn.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
+        var signInResult = user is null ? null : await users.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
         if (signInResult?.IsLockedOut == true) unknownUser.Verify(password);
         if (signInResult?.Succeeded == true && user is not null && !user.EmailConfirmed)
         {
