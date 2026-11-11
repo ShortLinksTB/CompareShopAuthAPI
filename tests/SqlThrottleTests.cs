@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Net;
 using CompareShopAuthAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.MsSql;
@@ -11,6 +12,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using CompareShopAuthAPI.Security;
+using System.Diagnostics;
 
 namespace CompareShopAuthAPI.Tests;
 
@@ -57,7 +59,9 @@ public sealed class SqlThrottleTests : IAsyncLifetime
         var duplicateRegistration = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = initialPassword });
         Assert.Equal(System.Net.HttpStatusCode.Accepted, duplicateRegistration.StatusCode);
         Assert.Equal(await registered.Content.ReadAsStringAsync(), await duplicateRegistration.Content.ReadAsStringAsync());
-        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = initialPassword })).StatusCode);
+        var unverifiedLogin = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = initialPassword });
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, unverifiedLogin.StatusCode);
+        Assert.Equal("email_not_verified", (await unverifiedLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
         EmailSendRequested verifyMessage;
         await using (var db = new AuthDbContext(options))
@@ -80,6 +84,11 @@ public sealed class SqlThrottleTests : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email, token = oldVerificationToken })).StatusCode);
         var verified = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email, token = verificationToken });
         Assert.Equal(System.Net.HttpStatusCode.OK, verified.StatusCode);
+
+        var knownWrongPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Wrong-Blue-Passphrase-994!" });
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, knownWrongPassword.StatusCode);
+        Assert.Equal("invalid_credentials", (await knownWrongPassword.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        Assert.Equal(await unknownLogin.Content.ReadAsStringAsync(), await knownWrongPassword.Content.ReadAsStringAsync());
 
         var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = initialPassword });
         Assert.Equal(System.Net.HttpStatusCode.OK, login.StatusCode);
@@ -161,6 +170,99 @@ public sealed class SqlThrottleTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task EnumerationCohortsHaveIdenticalResponsesAndBoundedTimingDeltas()
+    {
+        var options = new DbContextOptionsBuilder<AuthDbContext>().UseSqlServer(_sql.GetConnectionString()).Options;
+        await using (var db = new AuthDbContext(options)) await db.Database.MigrateAsync();
+        using var rsa = RSA.Create(2048);
+        using var app = new AuthApiFactory(_sql.GetConnectionString(), rsa.ExportPkcs8PrivateKeyPem(), new Dictionary<string, string?>
+        {
+            ["SecurityTiming:MinimumDurationMs"] = "80",
+            ["SecurityTiming:JitterMs"] = "25",
+            ["Lockout:MaxFailedAccessAttempts"] = "200",
+            ["Throttle:RegisterIpPerHour"] = "1000",
+            ["Throttle:RegisterEmailPerHour"] = "1000",
+            ["Throttle:LoginIpPer15Minutes"] = "1000",
+            ["Throttle:LoginEmailPer15Minutes"] = "1000",
+            ["Throttle:ForgotIpPerHour"] = "1000",
+            ["Throttle:ForgotEmailPerHour"] = "1000"
+        });
+        using var client = app.CreateClient();
+        var knownEmail = $"cohort-{Guid.NewGuid():N}@example.test";
+        const string password = "Cohort-Blue-Passphrase-941!";
+
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email = knownEmail, password })).StatusCode);
+        var verificationMessage = await ReadLatestMessage("auth-verify");
+        var link = verificationMessage.TemplateData["verificationLink"];
+        var token = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(link, "[?&]token=([^&]+)").Groups[1].Value);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email = knownEmail, token })).StatusCode);
+
+        var newRegistration = await MeasureAsync(async index => await client.PostAsJsonAsync("/api/v1/auth/register", new { email = $"new-{index}-{Guid.NewGuid():N}@example.test", password }));
+        var existingRegistration = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/register", new { email = knownEmail, password }));
+        AssertEquivalentCohorts(newRegistration, existingRegistration);
+
+        var unknownForgot = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = $"missing-{Guid.NewGuid():N}@example.test" }));
+        var knownForgot = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = knownEmail }));
+        AssertEquivalentCohorts(unknownForgot, knownForgot);
+
+        var unknownLoginEmail = $"missing-{Guid.NewGuid():N}@example.test";
+        var unknownLogin = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/login", new { email = unknownLoginEmail, password }));
+        var knownWrongLogin = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/login", new { email = knownEmail, password = "Wrong-Cohort-Passphrase-941!" }));
+        AssertEquivalentCohorts(unknownLogin, knownWrongLogin);
+
+        async Task<CohortResult> MeasureAsync(Func<int, Task<HttpResponseMessage>> request)
+        {
+            var samples = new List<TimeSpan>(100);
+            HttpStatusCode? expectedStatus = null;
+            string? expectedBody = null;
+            for (var i = 0; i < 100; i++)
+            {
+                var timer = Stopwatch.StartNew();
+                using var response = await request(i);
+                var body = await response.Content.ReadAsStringAsync();
+                timer.Stop();
+                if (expectedStatus is null)
+                {
+                    expectedStatus = response.StatusCode;
+                    expectedBody = body;
+                }
+                else
+                {
+                    Assert.Equal(expectedStatus, response.StatusCode);
+                    Assert.Equal(expectedBody, body);
+                }
+                samples.Add(timer.Elapsed);
+            }
+            return new CohortResult(samples, expectedStatus!.Value, expectedBody!);
+        }
+
+        async Task<EmailSendRequested> ReadLatestMessage(string template)
+        {
+            await using var db = new AuthDbContext(options);
+            var protector = app.Services.GetRequiredService<SecretPayloadProtector>();
+            var rows = await db.EmailOutbox.OrderByDescending(x => x.CreatedAt).ToListAsync();
+            return rows.Select(x => protector.Unprotect<EmailSendRequested>(x.Nonce, x.Ciphertext, x.Tag)).First(x => x.TemplateKey == template);
+        }
+    }
+
+    private static void AssertEquivalentCohorts(CohortResult left, CohortResult right)
+    {
+        Assert.Equal(left.Status, right.Status);
+        Assert.Equal(left.Body, right.Body);
+        Assert.InRange((Percentile(left.Samples, 0.50) - Percentile(right.Samples, 0.50)).Duration().TotalMilliseconds, 0d, 25d);
+        Assert.InRange((Percentile(left.Samples, 0.95) - Percentile(right.Samples, 0.95)).Duration().TotalMilliseconds, 0d, 50d);
+    }
+
+    private static TimeSpan Percentile(IReadOnlyCollection<TimeSpan> samples, double percentile)
+    {
+        var ordered = samples.OrderBy(x => x).ToArray();
+        var index = Math.Clamp((int)Math.Ceiling(percentile * ordered.Length) - 1, 0, ordered.Length - 1);
+        return ordered[index];
+    }
+
+    private sealed record CohortResult(IReadOnlyCollection<TimeSpan> Samples, System.Net.HttpStatusCode Status, string Body);
+
     private static DistributedThrottle CreateThrottle(AuthDbContext db) => new(
         db,
         new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Throttle:HashKey"] = "test-only-hmac-key" }).Build(),
@@ -177,7 +279,7 @@ public sealed class SqlThrottleTests : IAsyncLifetime
 
     private static string Cookie(HttpResponseMessage response) => response.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
 
-    private sealed class AuthApiFactory(string connectionString, string signingKey) : WebApplicationFactory<Program>
+    private sealed class AuthApiFactory(string connectionString, string signingKey, Dictionary<string, string?>? extraSettings = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -197,7 +299,7 @@ public sealed class SqlThrottleTests : IAsyncLifetime
                 ["Cors:UiOrigin"] = "https://shop.example.test",
                 ["CompareShopUI:BaseUrl"] = "https://shop.example.test",
                 ["Turnstile:Enabled"] = "false"
-            }));
+            }.Concat(extraSettings ?? []).ToDictionary(x => x.Key, x => x.Value)));
         }
     }
 }

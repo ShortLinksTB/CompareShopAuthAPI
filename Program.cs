@@ -17,7 +17,7 @@ builder.Services.AddIdentityCore<AuthUser>(o =>
     o.Password.RequireNonAlphanumeric = false;
     o.Password.RequiredLength = 8;
     o.Password.RequiredUniqueChars = 1;
-    o.Lockout.MaxFailedAccessAttempts = 5;
+    o.Lockout.MaxFailedAccessAttempts = TestLimit(builder.Configuration, builder.Environment.IsEnvironment("Testing"), "Lockout:MaxFailedAccessAttempts", 5);
     o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     o.User.RequireUniqueEmail = true;
 }).AddEntityFrameworkStores<AuthDbContext>().AddSignInManager();
@@ -28,6 +28,8 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddSingleton<SecretPayloadProtector>();
 builder.Services.AddScoped<AuthEmailOutbox>();
+builder.Services.AddScoped<EmailOutboxBatchDispatcher>();
+builder.Services.AddSingleton<IEmailMessagePublisher, RabbitMqEmailMessagePublisher>();
 builder.Services.AddScoped<DistributedThrottle>();
 builder.Services.AddHostedService<EmailOutboxPublisher>();
 builder.Services.AddHostedService<ThrottleBucketRetentionService>();
@@ -67,8 +69,8 @@ auth.MapPost("/register", async (HttpContext http, RegisterRequest request, User
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Email and password are required."] });
     var email = request.Email.Trim();
     var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    if (!await throttle.TryConsumeAsync("register:ip", ip, 10, TimeSpan.FromHours(1), ct) ||
-        !await throttle.TryConsumeAsync("register:email", email, 5, TimeSpan.FromHours(1), ct)) return Results.StatusCode(429);
+    if (!await throttle.TryConsumeAsync("register:ip", ip, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:RegisterIpPerHour", 10), TimeSpan.FromHours(1), ct) ||
+        !await throttle.TryConsumeAsync("register:email", email, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:RegisterEmailPerHour", 5), TimeSpan.FromHours(1), ct)) return Results.StatusCode(429);
     var errors = policy.Validate(email, request.Password);
     if (errors.Count != 0) return Results.ValidationProblem(errors);
     var user = new AuthUser { UserName = email, Email = email, EmailConfirmed = false };
@@ -95,25 +97,31 @@ auth.MapPost("/register", async (HttpContext http, RegisterRequest request, User
     return Results.Accepted(value: GenericEmailResponse());
 });
 
-auth.MapPost("/login", async (HttpContext http, LoginRequest request, UserManager<AuthUser> users, SignInManager<AuthUser> signIn, UnknownUserCredential unknownUser, AuthDbContext db, DistributedThrottle throttle, AccessTokenIssuer issuer, TurnstileVerifier captcha, TimeProvider clock, CancellationToken ct) =>
+auth.MapPost("/login", async (HttpContext http, LoginRequest request, UserManager<AuthUser> users, SignInManager<AuthUser> signIn, UnknownUserCredential unknownUser, AuthDbContext db, DistributedThrottle throttle, AccessTokenIssuer issuer, TurnstileVerifier captcha, TimeProvider clock, IConfiguration config, CancellationToken ct) =>
 {
     var captchaResult = await captcha.VerifyAsync(request.CaptchaToken, http.Connection.RemoteIpAddress?.ToString(), ct);
     if (!captchaResult.Accepted) return Results.BadRequest(new { code = "captcha_failed" });
     var emailKey = request.Email?.Trim() ?? "";
     var password = request.Password ?? "";
     var ipKey = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    if (!await throttle.TryConsumeAsync("login:ip", ipKey, 10, TimeSpan.FromMinutes(15), ct) ||
-        !await throttle.TryConsumeAsync("login:email", emailKey, 5, TimeSpan.FromMinutes(15), ct)) return Results.StatusCode(429);
+    if (!await throttle.TryConsumeAsync("login:ip", ipKey, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:LoginIpPer15Minutes", 10), TimeSpan.FromMinutes(15), ct) ||
+        !await throttle.TryConsumeAsync("login:email", emailKey, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:LoginEmailPer15Minutes", 5), TimeSpan.FromMinutes(15), ct)) return Results.StatusCode(429);
     var normalized = users.NormalizeEmail(emailKey);
     var user = normalized is null ? null : await users.FindByEmailAsync(emailKey);
     if (user is null) unknownUser.Verify(password);
     var signInResult = user is null ? null : await signIn.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
     if (signInResult?.IsLockedOut == true) unknownUser.Verify(password);
-    if (signInResult?.Succeeded != true || user is null || !user.EmailConfirmed)
+    if (signInResult?.Succeeded == true && user is not null && !user.EmailConfirmed)
     {
         db.AuthEvents.Add(NewEvent(user?.Id, "login_failed", http));
         await db.SaveChangesAsync(ct);
-        return Results.Unauthorized();
+        return Results.Json(new { code = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    if (signInResult?.Succeeded != true || user is null)
+    {
+        db.AuthEvents.Add(NewEvent(user?.Id, "login_failed", http));
+        await db.SaveChangesAsync(ct);
+        return Results.Json(new { code = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);
     }
     db.AuthEvents.Add(NewEvent(user.Id, "login_succeeded", http));
     await db.SaveChangesAsync(ct);
@@ -158,8 +166,8 @@ auth.MapPost("/resend-verification", async (HttpContext http, EmailRequest reque
     var generic = GenericEmailResponse();
     var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     var requestedEmail = request.Email?.Trim() ?? "";
-    var allowed = await throttle.TryConsumeAsync("resend:ip", ip, 10, TimeSpan.FromHours(1), ct) &&
-        await throttle.TryConsumeAsync("resend:email", requestedEmail, 3, TimeSpan.FromHours(1), ct);
+    var allowed = await throttle.TryConsumeAsync("resend:ip", ip, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:ResendIpPerHour", 10), TimeSpan.FromHours(1), ct) &&
+        await throttle.TryConsumeAsync("resend:email", requestedEmail, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:ResendEmailPerHour", 3), TimeSpan.FromHours(1), ct);
     if (!allowed) return Results.Accepted(value: generic);
     var user = await users.FindByEmailAsync(requestedEmail);
     if (user is null || user.EmailConfirmed) return Results.Accepted(value: generic);
@@ -182,8 +190,8 @@ auth.MapPost("/forgot-password", async (HttpContext http, EmailRequest request, 
     var generic = GenericEmailResponse();
     var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     var requestedEmail = request.Email?.Trim() ?? "";
-    var allowed = await throttle.TryConsumeAsync("forgot:ip", ip, 3, TimeSpan.FromHours(1), ct) &&
-        await throttle.TryConsumeAsync("forgot:email", requestedEmail, 3, TimeSpan.FromHours(1), ct);
+    var allowed = await throttle.TryConsumeAsync("forgot:ip", ip, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:ForgotIpPerHour", 3), TimeSpan.FromHours(1), ct) &&
+        await throttle.TryConsumeAsync("forgot:email", requestedEmail, TestLimit(config, builder.Environment.IsEnvironment("Testing"), "Throttle:ForgotEmailPerHour", 3), TimeSpan.FromHours(1), ct);
     if (!allowed) return Results.Accepted(value: generic);
     var user = await users.FindByEmailAsync(requestedEmail);
     if (user is null || !user.EmailConfirmed) return Results.Accepted(value: generic);
@@ -333,6 +341,7 @@ auth.MapGet("/jwks", (AccessTokenIssuer issuer) => Results.Json(issuer.Jwks()));
 app.Run();
 
 static string CreateSecret() => Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+static int TestLimit(IConfiguration config, bool isTest, string key, int productionValue) => isTest ? config.GetValue(key, productionValue) : productionValue;
 static string Hash(string raw) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
 static string PinHash(IConfiguration config, string userId, string salt, string pin)
 {
