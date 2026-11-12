@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using CompareShopAuthAPI;
+using CompareShopAuthAPI.Application;
 using CompareShopAuthAPI.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
@@ -47,7 +48,7 @@ public sealed class SecurityTests
             ["Jwt:KeyId"] = "key-1"
         });
         using var issuer = new AccessTokenIssuer(config);
-        var user = new AuthUser { Id = "subject-1", Email = "person@example.com" };
+        var user = new AuthIdentityUser("subject-1", "person@example.com", true);
         var issuedAt = DateTimeOffset.Parse("2026-11-11T14:00:00Z");
         var handler = new JwtSecurityTokenHandler();
         var token = handler.ReadJwtToken(issuer.Issue(user, issuedAt));
@@ -84,7 +85,7 @@ public sealed class SecurityTests
             ["Jwt:Issuer"] = "https://auth.test", ["Jwt:Audience"] = "compareshop-api"
         });
         using var oldIssuer = new AccessTokenIssuer(oldConfiguration);
-        var oldToken = oldIssuer.Issue(new AuthUser { Id = "subject", Email = "person@example.test" }, DateTimeOffset.UtcNow);
+        var oldToken = oldIssuer.Issue(new AuthIdentityUser("subject", "person@example.test", true), DateTimeOffset.UtcNow);
         var newConfiguration = Configuration(new Dictionary<string, string?>
         {
             ["Jwt:PrivateKeyPem"] = currentKey.ExportPkcs8PrivateKeyPem(), ["Jwt:KeyId"] = "current-key",

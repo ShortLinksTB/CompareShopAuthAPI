@@ -1,3 +1,4 @@
+using CompareShopAuthAPI.Application;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,50 +31,6 @@ public sealed class AuthDbContext(DbContextOptions<AuthDbContext> options) : Ide
     }
 }
 
-public sealed class RefreshSession
-{
-    public Guid Id { get; set; }
-    public Guid FamilyId { get; set; }
-    public string UserId { get; set; } = "";
-    public string TokenHash { get; set; } = "";
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
-    public DateTimeOffset? RevokedAt { get; set; }
-    public string? ReplacedByHash { get; set; }
-    public DateTimeOffset FamilyExpiresAt { get; set; }
-}
-
-public sealed class EmailVerification
-{
-    public Guid Id { get; set; }
-    public string UserId { get; set; } = "";
-    public string TokenHash { get; set; } = "";
-    public DateTimeOffset ExpiresAt { get; set; }
-    public DateTimeOffset? UsedAt { get; set; }
-}
-
-public sealed class PasswordResetPin
-{
-    public Guid Id { get; set; }
-    public string UserId { get; set; } = "";
-    public string NormalizedEmail { get; set; } = "";
-    public string PinHash { get; set; } = "";
-    public string PinSalt { get; set; } = "";
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
-    public DateTimeOffset? UsedAt { get; set; }
-    public int FailedAttempts { get; set; }
-}
-
-public sealed class PasswordResetGrant
-{
-    public Guid Id { get; set; }
-    public string UserId { get; set; } = "";
-    public string TokenHash { get; set; } = "";
-    public DateTimeOffset ExpiresAt { get; set; }
-    public DateTimeOffset? UsedAt { get; set; }
-}
-
 public sealed class EmailOutboxMessage
 {
     public Guid RequestId { get; set; }
@@ -95,14 +52,4 @@ public sealed class ThrottleBucket
     public string BucketKey { get; set; } = "";
     public DateTimeOffset WindowStart { get; set; }
     public int Count { get; set; }
-}
-
-public sealed class AuthEvent
-{
-    public long Id { get; set; }
-    public string? UserId { get; set; }
-    public string Type { get; set; } = "";
-    public DateTimeOffset OccurredAt { get; set; }
-    public string? IpAddress { get; set; }
-    public string? UserAgent { get; set; }
 }

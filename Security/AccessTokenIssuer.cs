@@ -1,11 +1,12 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using CompareShopAuthAPI.Application;
 using Microsoft.IdentityModel.Tokens;
 
 namespace CompareShopAuthAPI.Security;
 
-public sealed class AccessTokenIssuer : IDisposable
+public sealed class AccessTokenIssuer : IAccessTokenPort, IDisposable
 {
     private readonly RSA? _rsa;
     private readonly RSA? _previousRsa;
@@ -48,7 +49,7 @@ public sealed class AccessTokenIssuer : IDisposable
 
     public bool IsConfigured => _credentials is not null;
 
-    public string Issue(AuthUser user, DateTimeOffset now)
+    public string Issue(AuthIdentityUser user, DateTimeOffset now)
     {
         if (_credentials is null) throw new InvalidOperationException("JWT signing key is not configured.");
         var token = new JwtSecurityToken(_issuer, _audience,

@@ -1,72 +1,62 @@
 using System.Security.Cryptography;
 using System.Text;
-using CompareShopAuthAPI.Data;
-using CompareShopAuthAPI.Security;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 
 namespace CompareShopAuthAPI.Application;
 
 public interface ILoginUseCase
 {
-    Task<IResult> ExecuteAsync(HttpContext http, LoginRequest request, CancellationToken cancellationToken);
+    Task<AuthResponse> ExecuteAsync(AuthRequestContext context, LoginRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class LoginUseCase(
     IAuthIdentityPort users,
-    UnknownUserCredential unknownUser,
-    AuthDbContext db,
+    IUnknownCredentialPort unknownUser,
+    IAuthDataPort data,
     IAuthRateLimitPort throttle,
-    AccessTokenIssuer issuer,
+    IAccessTokenPort issuer,
     ICaptchaVerificationPort captcha,
     TimeProvider clock,
-    IConfiguration configuration,
-    IHostEnvironment environment) : ILoginUseCase
+    IAuthSettings settings) : ILoginUseCase
 {
-    public async Task<IResult> ExecuteAsync(HttpContext http, LoginRequest request, CancellationToken cancellationToken)
+    public async Task<AuthResponse> ExecuteAsync(AuthRequestContext context, LoginRequest request, CancellationToken cancellationToken)
     {
-        var captchaResult = await captcha.VerifyAsync(request.CaptchaToken, http.Connection.RemoteIpAddress?.ToString(), cancellationToken);
-        if (!captchaResult.Accepted) return Results.BadRequest(new { code = "captcha_failed" });
+        var captchaResult = await captcha.VerifyAsync(request.CaptchaToken, context.RemoteIp, cancellationToken);
+        if (!captchaResult.Accepted) return AuthResponses.BadRequest(new { code = "captcha_failed" });
         var emailKey = request.Email?.Trim() ?? "";
         var password = request.Password ?? "";
-        var ipKey = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var ipLimit = TestLimit("Throttle:LoginIpPer15Minutes", 10);
-        var emailLimit = TestLimit("Throttle:LoginEmailPer15Minutes", 5);
-        if (!await throttle.TryConsumeAsync("login:ip", ipKey, ipLimit, TimeSpan.FromMinutes(15), cancellationToken) ||
-            !await throttle.TryConsumeAsync("login:email", emailKey, emailLimit, TimeSpan.FromMinutes(15), cancellationToken)) return Results.StatusCode(429);
+        var ipKey = context.RemoteIp ?? "unknown";
+        if (!await throttle.TryConsumeAsync("login:ip", ipKey, settings.GetLimit("Throttle:LoginIpPer15Minutes", 10), TimeSpan.FromMinutes(15), cancellationToken) ||
+            !await throttle.TryConsumeAsync("login:email", emailKey, settings.GetLimit("Throttle:LoginEmailPer15Minutes", 5), TimeSpan.FromMinutes(15), cancellationToken))
+            return AuthResponses.TooManyRequests();
 
         var normalized = users.NormalizeEmail(emailKey);
         var user = normalized is null ? null : await users.FindByEmailAsync(emailKey);
         if (user is null) unknownUser.Verify(password);
-        var signInResult = user is null ? null : await users.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
-        if (signInResult?.IsLockedOut == true) unknownUser.Verify(password);
-        if (signInResult?.Succeeded == true && user is not null && !user.EmailConfirmed)
+        var signIn = user is null ? null : await users.CheckPasswordAsync(user.Id, password, lockoutOnFailure: true);
+        if (signIn?.LockedOut == true) unknownUser.Verify(password);
+        if (signIn?.Succeeded == true && user is not null && !user.EmailConfirmed)
         {
-            db.AuthEvents.Add(NewEvent(user.Id, "login_failed", http));
-            await db.SaveChangesAsync(cancellationToken);
-            return Results.Json(new { code = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
+            data.Add(AuthApplicationUtilities.NewEvent(user.Id, "login_failed", context, clock.GetUtcNow()));
+            await data.SaveChangesAsync(cancellationToken);
+            return new AuthResponse(403, new { code = "email_not_verified" });
         }
-        if (signInResult?.Succeeded != true || user is null)
+        if (signIn?.Succeeded != true || user is null)
         {
-            db.AuthEvents.Add(NewEvent(user?.Id, "login_failed", http));
-            await db.SaveChangesAsync(cancellationToken);
-            return Results.Json(new { code = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);
+            data.Add(AuthApplicationUtilities.NewEvent(user?.Id, "login_failed", context, clock.GetUtcNow()));
+            await data.SaveChangesAsync(cancellationToken);
+            return new AuthResponse(401, new { code = "invalid_credentials" });
         }
 
-        db.AuthEvents.Add(NewEvent(user.Id, "login_succeeded", http));
-        await db.SaveChangesAsync(cancellationToken);
-        if (!issuer.IsConfigured) return Results.Problem("Authentication is temporarily unavailable.", statusCode: StatusCodes.Status503ServiceUnavailable);
-        var refresh = CreateSecret();
+        data.Add(AuthApplicationUtilities.NewEvent(user.Id, "login_succeeded", context, clock.GetUtcNow()));
+        await data.SaveChangesAsync(cancellationToken);
+        if (!issuer.IsConfigured) return AuthResponses.Unavailable("Authentication is temporarily unavailable.");
+        var refresh = AuthApplicationUtilities.CreateSecret();
         var now = clock.GetUtcNow();
-        db.RefreshSessions.Add(new RefreshSession { Id = Guid.NewGuid(), FamilyId = Guid.NewGuid(), UserId = user.Id, TokenHash = Hash(refresh), CreatedAt = now, ExpiresAt = now.AddDays(30), FamilyExpiresAt = now.AddDays(90) });
-        await db.SaveChangesAsync(cancellationToken);
-        SetRefreshCookie(http, refresh);
-        return Results.Ok(new { accessToken = issuer.Issue(user, now), tokenType = "Bearer", expiresIn = 900 });
+        data.Add(new RefreshSession { Id = Guid.NewGuid(), FamilyId = Guid.NewGuid(), UserId = user.Id, TokenHash = Hash(refresh), CreatedAt = now, ExpiresAt = now.AddDays(30), FamilyExpiresAt = now.AddDays(90) });
+        await data.SaveChangesAsync(cancellationToken);
+        return new AuthResponse(200, new { accessToken = issuer.Issue(user, now), tokenType = "Bearer", expiresIn = 900 },
+            new AuthCookie(refresh));
     }
 
-    private int TestLimit(string key, int productionValue) => environment.IsEnvironment("Testing") ? configuration.GetValue(key, productionValue) : productionValue;
-    private static string CreateSecret() => Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
     private static string Hash(string raw) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
-    private static void SetRefreshCookie(HttpContext http, string value) => http.Response.Cookies.Append("__Secure-CS-Refresh", value, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/api/v1/auth", Expires = DateTimeOffset.UtcNow.AddDays(30), IsEssential = true });
-    private static AuthEvent NewEvent(string? userId, string type, HttpContext http) => new() { UserId = userId, Type = type, OccurredAt = DateTimeOffset.UtcNow, IpAddress = http.Connection.RemoteIpAddress?.ToString(), UserAgent = http.Request.Headers.UserAgent.ToString() };
 }
