@@ -1,30 +1,16 @@
-using CompareShopAuthAPI.Security;
-using Microsoft.AspNetCore.Identity;
-
 namespace CompareShopAuthAPI.Application;
 
 public interface IAuthIdentityPort
 {
     string? NormalizeEmail(string? email);
-    Task<AuthUser?> FindByEmailAsync(string email);
-    Task<AuthUser?> FindByIdAsync(string userId);
-    Task<IdentityResult> CreateAsync(AuthUser user, string password);
-    Task<SignInResult> CheckPasswordSignInAsync(AuthUser user, string password, bool lockoutOnFailure);
-    Task<IdentityResult> ChangePasswordAsync(AuthUser user, string currentPassword, string newPassword);
-    Task<IdentityResult> RemovePasswordAsync(AuthUser user);
-    Task<IdentityResult> AddPasswordAsync(AuthUser user, string newPassword);
-}
-
-public sealed class AuthIdentityAdapter(UserManager<AuthUser> users, SignInManager<AuthUser> signIn) : IAuthIdentityPort
-{
-    public string? NormalizeEmail(string? email) => users.NormalizeEmail(email);
-    public Task<AuthUser?> FindByEmailAsync(string email) => users.FindByEmailAsync(email);
-    public Task<AuthUser?> FindByIdAsync(string userId) => users.FindByIdAsync(userId);
-    public Task<IdentityResult> CreateAsync(AuthUser user, string password) => users.CreateAsync(user, password);
-    public Task<SignInResult> CheckPasswordSignInAsync(AuthUser user, string password, bool lockoutOnFailure) => signIn.CheckPasswordSignInAsync(user, password, lockoutOnFailure);
-    public Task<IdentityResult> ChangePasswordAsync(AuthUser user, string currentPassword, string newPassword) => users.ChangePasswordAsync(user, currentPassword, newPassword);
-    public Task<IdentityResult> RemovePasswordAsync(AuthUser user) => users.RemovePasswordAsync(user);
-    public Task<IdentityResult> AddPasswordAsync(AuthUser user, string newPassword) => users.AddPasswordAsync(user, newPassword);
+    Task<AuthIdentityUser?> FindByEmailAsync(string email);
+    Task<AuthIdentityUser?> FindByIdAsync(string userId);
+    Task<AuthIdentityOperationResult> CreateAsync(string email, string password, CancellationToken cancellationToken);
+    Task<AuthPasswordCheckResult> CheckPasswordAsync(string userId, string password, bool lockoutOnFailure);
+    Task<AuthIdentityOperationResult> ConfirmEmailAsync(string userId);
+    Task<AuthIdentityOperationResult> ChangePasswordAsync(string userId, string currentPassword, string newPassword);
+    Task<AuthIdentityOperationResult> RemovePasswordAsync(string userId);
+    Task<AuthIdentityOperationResult> AddPasswordAsync(string userId, string newPassword);
 }
 
 public interface IAuthRateLimitPort
@@ -40,4 +26,30 @@ public interface IAuthEmailOutboxPort
 public interface ICaptchaVerificationPort
 {
     Task<CaptchaResult> VerifyAsync(string? token, string? remoteIp, CancellationToken cancellationToken);
+}
+
+public interface IAuthDataPort
+{
+    Task<IAuthTransaction> BeginTransactionAsync(CancellationToken cancellationToken, bool serializable = true);
+    Task<EmailVerification?> FindEmailVerificationForUpdateAsync(string tokenHash, CancellationToken cancellationToken);
+    Task InvalidateEmailVerificationsAsync(string userId, DateTimeOffset usedAt, CancellationToken cancellationToken);
+    Task<PasswordResetPin?> FindLatestPasswordResetPinForUpdateAsync(string normalizedEmail, CancellationToken cancellationToken);
+    Task InvalidatePasswordResetPinsAsync(string userId, DateTimeOffset usedAt, CancellationToken cancellationToken);
+    Task<PasswordResetGrant?> FindPasswordResetGrantForUpdateAsync(string tokenHash, CancellationToken cancellationToken);
+    Task<RefreshSession?> FindRefreshSessionForUpdateAsync(string tokenHash, CancellationToken cancellationToken);
+    Task RevokeRefreshFamilyAsync(Guid familyId, DateTimeOffset revokedAt, CancellationToken cancellationToken);
+    Task RevokeActiveRefreshSessionsAsync(string userId, DateTimeOffset revokedAt, CancellationToken cancellationToken);
+    Task RevokeRefreshSessionAsync(string tokenHash, DateTimeOffset revokedAt, CancellationToken cancellationToken);
+    void Add(EmailVerification verification);
+    void Add(PasswordResetPin pin);
+    void Add(PasswordResetGrant grant);
+    void Add(RefreshSession session);
+    void Add(AuthEvent authEvent);
+    Task SaveChangesAsync(CancellationToken cancellationToken);
+}
+
+public interface IAuthTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
+    Task RollbackAsync(CancellationToken cancellationToken);
 }

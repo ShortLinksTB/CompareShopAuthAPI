@@ -87,7 +87,7 @@ namespace CompareShopAuthAPI.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
-            modelBuilder.Entity("CompareShopAuthAPI.Data.AuthEvent", b =>
+            modelBuilder.Entity("CompareShopAuthAPI.Application.AuthEvent", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -164,7 +164,7 @@ namespace CompareShopAuthAPI.Data.Migrations
                     b.ToTable("EmailOutbox");
                 });
 
-            modelBuilder.Entity("CompareShopAuthAPI.Data.EmailVerification", b =>
+            modelBuilder.Entity("CompareShopAuthAPI.Application.EmailVerification", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -194,7 +194,7 @@ namespace CompareShopAuthAPI.Data.Migrations
                     b.ToTable("EmailVerifications");
                 });
 
-            modelBuilder.Entity("CompareShopAuthAPI.Data.PasswordResetGrant", b =>
+            modelBuilder.Entity("CompareShopAuthAPI.Application.PasswordResetGrant", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -222,7 +222,7 @@ namespace CompareShopAuthAPI.Data.Migrations
                     b.ToTable("PasswordResetGrants");
                 });
 
-            modelBuilder.Entity("CompareShopAuthAPI.Data.PasswordResetPin", b =>
+            modelBuilder.Entity("CompareShopAuthAPI.Application.PasswordResetPin", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -265,7 +265,7 @@ namespace CompareShopAuthAPI.Data.Migrations
                     b.ToTable("PasswordResetPins");
                 });
 
-            modelBuilder.Entity("CompareShopAuthAPI.Data.RefreshSession", b =>
+            modelBuilder.Entity("CompareShopAuthAPI.Application.RefreshSession", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()

@@ -1,4 +1,4 @@
-namespace CompareShopAuthAPI.Security;
+namespace CompareShopAuthAPI.Application;
 
 public sealed class PasswordPolicy
 {

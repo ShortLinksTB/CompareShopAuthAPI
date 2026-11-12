@@ -1,9 +1,10 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
+using CompareShopAuthAPI.Application;
 
 namespace CompareShopAuthAPI.Security;
 
-public sealed class UnknownUserCredential
+public sealed class UnknownUserCredential : IUnknownCredentialPort
 {
     private readonly AuthUser _user = new() { Id = "unknown-user-timing-equalizer" };
     private readonly string _hash;

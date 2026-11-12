@@ -1,4 +1,4 @@
-using CompareShopAuthAPI.Security;
+using CompareShopAuthAPI.Application;
 using Xunit;
 
 namespace CompareShopAuthAPI.Tests;
