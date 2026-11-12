@@ -3,7 +3,7 @@ namespace CompareShopAuthAPI.Application;
 public sealed record RegisterRequest(string Email, string Password, string? CaptchaToken = null);
 public sealed record LoginRequest(string Email, string Password, string? CaptchaToken = null);
 public sealed record EmailRequest(string Email, string? CaptchaToken = null);
-public sealed record VerificationRequest(string Email, string Token);
+public sealed record VerificationRequest(string? Email, string Token);
 public sealed record VerifyResetCodeRequest(string Email, string Code);
 public sealed record ResetPasswordRequest(string ResetToken, string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);

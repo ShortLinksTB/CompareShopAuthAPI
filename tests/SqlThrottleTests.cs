@@ -70,8 +70,8 @@ public sealed class SqlThrottleTests : IAsyncLifetime
             var rows = await db.EmailOutbox.OrderByDescending(x => x.CreatedAt).ToListAsync();
             verifyMessage = rows.Select(x => protector.Unprotect<EmailSendRequested>(x.Nonce, x.Ciphertext, x.Tag)).First(x => x.TemplateKey == "auth-verify");
         }
-        var verifyLink = verifyMessage.TemplateData["verificationLink"];
-        var oldVerificationToken = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(verifyLink, "[?&]token=([^&]+)").Groups[1].Value);
+        Assert.Equal(new[] { "token" }, verifyMessage.TemplateData.Keys.Order().ToArray());
+        var oldVerificationToken = verifyMessage.TemplateData["token"];
         Assert.Equal(System.Net.HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/v1/auth/resend-verification", new { email })).StatusCode);
         await using (var db = new AuthDbContext(options))
         {
@@ -79,10 +79,13 @@ public sealed class SqlThrottleTests : IAsyncLifetime
             var protector = app.Services.GetRequiredService<SecretPayloadProtector>();
             verifyMessage = rows.Select(x => protector.Unprotect<EmailSendRequested>(x.Nonce, x.Ciphertext, x.Tag)).First(x => x.TemplateKey == "auth-verify");
         }
-        var verificationLink = verifyMessage.TemplateData["verificationLink"];
-        var verificationToken = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(verificationLink, "[?&]token=([^&]+)").Groups[1].Value);
+        Assert.Equal(new[] { "token" }, verifyMessage.TemplateData.Keys.Order().ToArray());
+        var verificationToken = verifyMessage.TemplateData["token"];
+        var renderedTarget = new Uri($"https://shop.example.test/verify-email?token={Uri.EscapeDataString(verificationToken)}");
+        Assert.Equal("/verify-email", renderedTarget.AbsolutePath);
+        Assert.Equal(verificationToken, renderedTarget.Query.Split('=', 2)[1]);
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email, token = oldVerificationToken })).StatusCode);
-        var verified = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email, token = verificationToken });
+        var verified = await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { token = verificationToken });
         Assert.Equal(System.Net.HttpStatusCode.OK, verified.StatusCode);
 
         var knownWrongPassword = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "Wrong-Blue-Passphrase-994!" });
@@ -194,9 +197,8 @@ public sealed class SqlThrottleTests : IAsyncLifetime
 
         Assert.Equal(System.Net.HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email = knownEmail, password })).StatusCode);
         var verificationMessage = await ReadLatestMessage("auth-verify");
-        var link = verificationMessage.TemplateData["verificationLink"];
-        var token = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(link, "[?&]token=([^&]+)").Groups[1].Value);
-        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { email = knownEmail, token })).StatusCode);
+        var token = verificationMessage.TemplateData["token"];
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/verify-email", new { token })).StatusCode);
 
         var newRegistration = await MeasureAsync(async index => await client.PostAsJsonAsync("/api/v1/auth/register", new { email = $"new-{index}-{Guid.NewGuid():N}@example.test", password }));
         var existingRegistration = await MeasureAsync(_ => client.PostAsJsonAsync("/api/v1/auth/register", new { email = knownEmail, password }));

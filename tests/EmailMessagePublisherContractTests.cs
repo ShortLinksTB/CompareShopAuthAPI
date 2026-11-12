@@ -11,6 +11,22 @@ namespace CompareShopAuthAPI.Tests;
 public sealed class EmailMessagePublisherContractTests
 {
     [Fact]
+    public void VerificationTemplateDataUsesRendererTokenAndProducesUsableTarget()
+    {
+        const string syntheticToken = "synthetic-token_123";
+        var templateData = CompareShopAuthAPI.Application.AuthApplicationUtilities.VerificationTemplateData(syntheticToken);
+
+        Assert.Equal(new[] { "token" }, templateData.Keys.Order().ToArray());
+        Assert.Equal(syntheticToken, templateData["token"]);
+
+        var target = new Uri($"https://shop.example.test/verify-email?token={Uri.EscapeDataString(templateData["token"])}");
+        Assert.Equal("https", target.Scheme);
+        Assert.Equal("shop.example.test", target.Host);
+        Assert.Equal("/verify-email", target.AbsolutePath);
+        Assert.Equal(syntheticToken, target.Query["?token=".Length..]);
+    }
+
+    [Fact]
     public async Task OutboxEnqueueStoresEncryptedEmailApiV1Contract()
     {
         var options = new DbContextOptionsBuilder<AuthDbContext>()

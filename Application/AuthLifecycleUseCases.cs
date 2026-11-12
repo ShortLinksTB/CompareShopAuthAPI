@@ -8,8 +8,7 @@ public sealed class VerifyEmailUseCase(IAuthDataPort data, IAuthIdentityPort use
 {
     public async Task<AuthResponse> ExecuteAsync(AuthRequestContext context, VerificationRequest request, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Token)) return AuthResponses.BadRequest(new { code = "verification_invalid" });
-        var email = request.Email.Trim();
+        if (string.IsNullOrWhiteSpace(request.Token)) return AuthResponses.BadRequest(new { code = "verification_invalid" });
         await using var transaction = await data.BeginTransactionAsync(cancellationToken);
         var verification = await data.FindEmailVerificationForUpdateAsync(AuthApplicationUtilities.Hash(request.Token), cancellationToken);
         if (verification is null || verification.ExpiresAt <= clock.GetUtcNow() || verification.UsedAt is not null)
@@ -18,7 +17,7 @@ public sealed class VerifyEmailUseCase(IAuthDataPort data, IAuthIdentityPort use
             return AuthResponses.BadRequest(new { code = "verification_invalid" });
         }
         var user = await users.FindByIdAsync(verification.UserId);
-        if (user is null || !string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+        if (user is null || (!string.IsNullOrWhiteSpace(request.Email) && !string.Equals(user.Email, request.Email.Trim(), StringComparison.OrdinalIgnoreCase)))
         {
             await transaction.RollbackAsync(cancellationToken);
             return AuthResponses.BadRequest(new { code = "verification_invalid" });
@@ -57,8 +56,7 @@ public sealed class ResendVerificationUseCase(IAuthIdentityPort users, IAuthData
         await data.InvalidateEmailVerificationsAsync(user.Id, now, cancellationToken);
         var token = AuthApplicationUtilities.CreateSecret();
         data.Add(new EmailVerification { Id = Guid.NewGuid(), UserId = user.Id, TokenHash = AuthApplicationUtilities.Hash(token), ExpiresAt = now.AddHours(24) });
-        var link = $"{settings.Get("CompareShopUI:BaseUrl")?.TrimEnd('/')}/verify-email?email={Uri.EscapeDataString(user.Email!)}&token={Uri.EscapeDataString(token)}";
-        outbox.Enqueue(user.Email!, "auth-verify", new Dictionary<string, string> { ["verificationLink"] = link });
+        outbox.Enqueue(user.Email!, "auth-verify", AuthApplicationUtilities.VerificationTemplateData(token));
         data.Add(AuthApplicationUtilities.NewEvent(user.Id, "verification_resent", context, now));
         await data.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -251,6 +249,7 @@ public sealed class RefreshSessionUseCase(IAuthDataPort data, IAuthIdentityPort 
 public static class AuthApplicationUtilities
 {
     public static string CreateSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    public static Dictionary<string, string> VerificationTemplateData(string token) => new() { ["token"] = token };
     public static string Hash(string raw) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
     public static string PinHash(IAuthSettings settings, string userId, string salt, string pin)
     {
