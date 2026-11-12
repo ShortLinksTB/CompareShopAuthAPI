@@ -22,11 +22,25 @@ public sealed class EmailMessagePublisherContractTests
         Assert.Equal(message.RequestId.ToString("D"), transport.Properties!.MessageId);
         Assert.True(transport.Properties.Persistent);
         Assert.Equal("application/json", transport.Properties.ContentType);
+        using var document = JsonDocument.Parse(transport.Body!);
+        var root = document.RootElement;
+        Assert.Equal(JsonValueKind.Object, root.ValueKind);
+        Assert.Equal("EmailSendRequested", root.GetProperty("messageType").GetString());
+        Assert.Equal(1, root.GetProperty("version").GetInt32());
+        Assert.Equal(message.RequestId.ToString("D"), root.GetProperty("requestId").GetString());
+        Assert.Equal("person@example.test", root.GetProperty("to").GetString());
+        Assert.Equal("auth-verify", root.GetProperty("templateKey").GetString());
+        Assert.Equal("vi", root.GetProperty("locale").GetString());
+        Assert.Equal("auth-verify", root.GetProperty("subjectKey").GetString());
+        Assert.Equal(JsonValueKind.Object, root.GetProperty("templateData").ValueKind);
+        Assert.False(root.TryGetProperty("recipient", out _));
+
         var payload = JsonSerializer.Deserialize<EmailSendRequested>(transport.Body!);
         Assert.NotNull(payload);
+        Assert.Equal("EmailSendRequested", payload.MessageType);
         Assert.Equal(message.RequestId, payload.RequestId);
         Assert.Equal(message.Version, payload.Version);
-        Assert.Equal(message.Recipient, payload.Recipient);
+        Assert.Equal(message.To, payload.To);
         Assert.Equal(message.TemplateKey, payload.TemplateKey);
         Assert.Equal(message.Locale, payload.Locale);
         Assert.Equal(message.SubjectKey, payload.SubjectKey);
@@ -47,7 +61,7 @@ public sealed class EmailMessagePublisherContractTests
         await Assert.ThrowsAsync<HttpRequestException>(() => publish);
     }
 
-    private static EmailSendRequested NewMessage() => new(Guid.NewGuid(), 1, "person@example.test", "auth-verify", "vi", "auth-verify", new Dictionary<string, string>());
+    private static EmailSendRequested NewMessage() => new("EmailSendRequested", Guid.NewGuid(), 1, "person@example.test", "auth-verify", "vi", "auth-verify", new Dictionary<string, string>());
 
     private sealed class RecordingTransport : IEmailBrokerTransport
     {

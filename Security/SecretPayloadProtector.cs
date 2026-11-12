@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CompareShopAuthAPI.Security;
 
@@ -38,4 +38,20 @@ public sealed class SecretPayloadProtector(IConfiguration configuration)
     }
 }
 
-public sealed record EmailSendRequested(Guid RequestId, int Version, string Recipient, string TemplateKey, string Locale, string SubjectKey, Dictionary<string, string> TemplateData);
+public sealed record EmailSendRequested(
+    [property: JsonPropertyName("messageType")]
+    string MessageType,
+    [property: JsonPropertyName("requestId")]
+    Guid RequestId,
+    [property: JsonPropertyName("version")]
+    int Version,
+    [property: JsonPropertyName("to")]
+    string To,
+    [property: JsonPropertyName("templateKey")]
+    string TemplateKey,
+    [property: JsonPropertyName("locale")]
+    string Locale,
+    [property: JsonPropertyName("subjectKey")]
+    string SubjectKey,
+    [property: JsonPropertyName("templateData")]
+    Dictionary<string, string> TemplateData);
