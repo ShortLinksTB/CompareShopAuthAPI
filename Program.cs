@@ -47,7 +47,9 @@ builder.Services.AddScoped<IPasswordRecoveryUseCase, PasswordRecoveryUseCase>();
 builder.Services.AddScoped<IPasswordChangeUseCase, PasswordChangeUseCase>();
 builder.Services.AddScoped<IRefreshSessionUseCase, RefreshSessionUseCase>();
 builder.Services.AddScoped<EmailOutboxBatchDispatcher>();
-builder.Services.AddSingleton<IEmailBrokerTransport, RabbitMqEmailBrokerTransport>();
+builder.Services.AddSingleton<IEmailBrokerTransport>(services => new RabbitMqEmailBrokerTransport(
+    services.GetRequiredService<IConfiguration>(),
+    services.GetRequiredService<ILogger<RabbitMqEmailBrokerTransport>>()));
 builder.Services.AddSingleton<IEmailMessagePublisher, RabbitMqEmailMessagePublisher>();
 builder.Services.AddHostedService<EmailOutboxPublisher>();
 builder.Services.AddHostedService<ThrottleBucketRetentionService>();

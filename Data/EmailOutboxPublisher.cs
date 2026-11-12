@@ -99,11 +99,27 @@ public sealed class RabbitMqEmailMessagePublisher(IEmailBrokerTransport transpor
     }
 }
 
-public sealed class RabbitMqEmailBrokerTransport(IConfiguration configuration, ILogger<RabbitMqEmailBrokerTransport> logger) : IEmailBrokerTransport, IAsyncDisposable
+public sealed class RabbitMqEmailBrokerTransport : IEmailBrokerTransport, IAsyncDisposable
 {
+    private readonly IConfiguration configuration;
+    private readonly ILogger<RabbitMqEmailBrokerTransport> logger;
+    private readonly Func<ConnectionFactory, CancellationToken, Task<IConnection>> createConnection;
     private readonly SemaphoreSlim gate = new(1, 1);
     private IConnection? connection;
     private IChannel? channel;
+
+    public RabbitMqEmailBrokerTransport(IConfiguration configuration, ILogger<RabbitMqEmailBrokerTransport> logger)
+        : this(configuration, logger, static (factory, cancellationToken) => factory.CreateConnectionAsync(cancellationToken)) { }
+
+    public RabbitMqEmailBrokerTransport(
+        IConfiguration configuration,
+        ILogger<RabbitMqEmailBrokerTransport> logger,
+        Func<ConnectionFactory, CancellationToken, Task<IConnection>> createConnection)
+    {
+        this.configuration = configuration;
+        this.logger = logger;
+        this.createConnection = createConnection;
+    }
 
     public async Task PublishAsync(string exchange, string routingKey, BasicProperties properties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
     {
@@ -139,7 +155,7 @@ public sealed class RabbitMqEmailBrokerTransport(IConfiguration configuration, I
             NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
             RequestedConnectionTimeout = TimeSpan.FromSeconds(2)
         };
-        connection = await factory.CreateConnectionAsync(cancellationToken);
+        connection = await createConnection(factory, cancellationToken);
         channel = await connection.CreateChannelAsync(
             new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true, null, null), cancellationToken);
     }
