@@ -1,9 +1,11 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using CompareShopAuthAPI.Data;
 using CompareShopAuthAPI.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using RabbitMQ.Client;
 using Testcontainers.MsSql;
 using Xunit;
 
@@ -16,6 +18,45 @@ public sealed class EmailOutboxPublisherTests : IAsyncLifetime
 
     public Task InitializeAsync() => sql.StartAsync();
     public Task DisposeAsync() => sql.DisposeAsync().AsTask();
+
+    [Fact]
+    public async Task EnqueuedAuthEmailIsSerializedWithEmailApiWireContract()
+    {
+        await using (var db = CreateDb()) await db.Database.MigrateAsync();
+
+        var templateData = new Dictionary<string, string> { ["greeting"] = "Hello" };
+        Guid requestId;
+        await using (var db = CreateDb())
+        {
+            var outbox = new AuthEmailOutbox(db, CreateProtector(), TimeProvider.System);
+            outbox.Enqueue("person@example.test", "auth-verify", templateData);
+            await db.SaveChangesAsync();
+            requestId = await db.EmailOutbox.Select(row => row.RequestId).SingleAsync();
+        }
+
+        var transport = new RecordingTransport();
+        var publisher = new RabbitMqEmailMessagePublisher(transport);
+        await using (var db = CreateDb())
+        {
+            var dispatcher = new EmailOutboxBatchDispatcher(db, CreateProtector(), publisher, TimeProvider.System, NullLogger<EmailOutboxBatchDispatcher>.Instance);
+            await dispatcher.DispatchAsync(CancellationToken.None);
+        }
+
+        Assert.Equal("email-send-requests-publisher", transport.Exchange);
+        Assert.Equal("email-send-requests", transport.RoutingKey);
+        Assert.Equal(requestId.ToString("D"), transport.Properties!.MessageId);
+        using var document = JsonDocument.Parse(transport.Body!);
+        var payload = document.RootElement;
+        Assert.Equal("EmailSendRequested", payload.GetProperty("messageType").GetString());
+        Assert.Equal(1, payload.GetProperty("version").GetInt32());
+        Assert.Equal(requestId.ToString("D"), payload.GetProperty("requestId").GetString());
+        Assert.Equal("person@example.test", payload.GetProperty("to").GetString());
+        Assert.Equal("auth-verify", payload.GetProperty("templateKey").GetString());
+        Assert.Equal("vi", payload.GetProperty("locale").GetString());
+        Assert.Equal("auth-verify", payload.GetProperty("subjectKey").GetString());
+        Assert.Equal("Hello", payload.GetProperty("templateData").GetProperty("greeting").GetString());
+        Assert.False(payload.TryGetProperty("recipient", out _));
+    }
 
     [Fact]
     public async Task ConfirmedPublishMarksOutboxRowPublished()
@@ -126,6 +167,23 @@ public sealed class EmailOutboxPublisherTests : IAsyncLifetime
                 FailNext = false;
                 throw new HttpRequestException("broker unavailable");
             }
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingTransport : IEmailBrokerTransport
+    {
+        public string? Exchange { get; private set; }
+        public string? RoutingKey { get; private set; }
+        public BasicProperties? Properties { get; private set; }
+        public byte[]? Body { get; private set; }
+
+        public Task PublishAsync(string exchange, string routingKey, BasicProperties properties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
+        {
+            Exchange = exchange;
+            RoutingKey = routingKey;
+            Properties = properties;
+            Body = body.ToArray();
             return Task.CompletedTask;
         }
     }
