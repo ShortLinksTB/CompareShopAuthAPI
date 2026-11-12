@@ -10,7 +10,7 @@ Supply configuration through the environment or the deployment Secret. Do not co
 - `Jwt__PrivateKeyPem` or `Jwt__PrivateKeyPath`, `Jwt__KeyId`, `Jwt__Issuer`, `Jwt__Audience`; optional `Jwt__PreviousPublicKeyPem` and `Jwt__PreviousKeyId` keep the prior signing key verifiable during rotation.
 - `Outbox__EncryptionKey`: base64 encoded 256-bit AES-GCM key.
 - `Pin__Pepper` and `Throttle__HashKey`: independent random secrets used to hash reset PINs and throttle identifiers.
-- `RabbitMQ__Host`, `RabbitMQ__Username`, `RabbitMQ__Password`, `RabbitMQ__EmailCommandQueue`: authenticated broker connection and durable versioned command queue.
+- `RabbitMQ__Host`, `RabbitMQ__Username`, `RabbitMQ__Password`: service-scoped publisher credentials supplied through deployment Secret references. AuthAPI publishes persistent versioned requests to exchange `email-send-requests-publisher` with routing key `email-send-requests`; the EmailAPI-owned queue is provisioned and bound by EmailAPI infrastructure.
 - `Cors__UiOrigin` and `CompareShopUI__BaseUrl`: the exact UI origin and configured link base.
 - `Turnstile__Enabled`, `Turnstile__Secret`, and `Turnstile__AllowedHostnames`. The `example.com` test hostname exists only in Development configuration. `Turnstile__AllowUnavailableInDev` defaults to false and only bypasses siteverify transport failures in Development.
 - `SecurityTiming__MinimumDurationMs` (default `250`) and `SecurityTiming__JitterMs` (default `25`) pad register, login, and forgot-password responses to reduce account-enumeration timing differences.
