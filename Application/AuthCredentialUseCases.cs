@@ -49,8 +49,7 @@ public sealed class RegisterAccountUseCase(
         if (user is null) throw new InvalidOperationException("Identity did not return the newly created account.");
         var rawToken = AuthApplicationUtilities.CreateSecret();
         data.Add(new EmailVerification { Id = Guid.NewGuid(), UserId = user.Id, TokenHash = AuthApplicationUtilities.Hash(rawToken), ExpiresAt = clock.GetUtcNow().AddHours(24) });
-        var link = $"{settings.Get("CompareShopUI:BaseUrl")?.TrimEnd('/')}/verify-email?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}";
-        outbox.Enqueue(email, "auth-verify", new Dictionary<string, string> { ["verificationLink"] = link });
+        outbox.Enqueue(email, "auth-verify", AuthApplicationUtilities.VerificationTemplateData(rawToken));
         data.Add(AuthApplicationUtilities.NewEvent(user.Id, "registered", context, clock.GetUtcNow()));
         await data.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

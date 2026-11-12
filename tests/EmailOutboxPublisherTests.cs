@@ -132,7 +132,7 @@ public sealed class EmailOutboxPublisherTests : IAsyncLifetime
 
     private async Task<EmailSendRequested> AddOutboxMessage()
     {
-        var message = new EmailSendRequested("EmailSendRequested", Guid.NewGuid(), 1, "person@example.test", "auth-verify", "vi", "auth-verify", new Dictionary<string, string> { ["verificationLink"] = "https://shop.example.test/verify?token=opaque" });
+        var message = new EmailSendRequested("EmailSendRequested", Guid.NewGuid(), 1, "person@example.test", "auth-verify", "vi", "auth-verify", new Dictionary<string, string> { ["token"] = "synthetic-token" });
         var protector = CreateProtector();
         var encrypted = protector.Protect(message);
         var now = DateTimeOffset.UtcNow;

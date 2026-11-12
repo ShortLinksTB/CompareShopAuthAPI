@@ -19,12 +19,12 @@ public sealed class SecurityTests
     {
         var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var protector = new SecretPayloadProtector(Configuration(new Dictionary<string, string?> { ["Outbox:EncryptionKey"] = key }));
-        var original = new EmailSendRequested("EmailSendRequested", Guid.NewGuid(), 1, "person@example.com", "auth-verify", "en", "auth-verify", new Dictionary<string, string> { ["verificationLink"] = "https://example.test/verify?secret=opaque" });
+        var original = new EmailSendRequested("EmailSendRequested", Guid.NewGuid(), 1, "person@example.com", "auth-verify", "en", "auth-verify", new Dictionary<string, string> { ["token"] = "synthetic-token" });
         var sealedPayload = protector.Protect(original);
         var opened = protector.Unprotect<EmailSendRequested>(sealedPayload.Nonce, sealedPayload.Ciphertext, sealedPayload.Tag);
         Assert.Equal(original.RequestId, opened.RequestId);
-        Assert.Equal(original.TemplateData["verificationLink"], opened.TemplateData["verificationLink"]);
-        Assert.NotEqual(original.TemplateData["verificationLink"], System.Text.Encoding.UTF8.GetString(sealedPayload.Ciphertext));
+        Assert.Equal(original.TemplateData["token"], opened.TemplateData["token"]);
+        Assert.NotEqual(original.TemplateData["token"], System.Text.Encoding.UTF8.GetString(sealedPayload.Ciphertext));
     }
 
     [Fact]
