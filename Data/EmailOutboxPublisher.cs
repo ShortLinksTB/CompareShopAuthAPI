@@ -10,6 +10,11 @@ public interface IEmailMessagePublisher
     Task PublishAsync(EmailSendRequested message, CancellationToken cancellationToken);
 }
 
+public interface IEmailBrokerTransport
+{
+    Task PublishAsync(string exchange, string routingKey, BasicProperties properties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
+}
+
 public sealed class EmailOutboxPublisher(IServiceScopeFactory scopeFactory, ILogger<EmailOutboxPublisher> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -76,26 +81,53 @@ public sealed class EmailOutboxBatchDispatcher(
     }
 }
 
-public sealed class RabbitMqEmailMessagePublisher(IConfiguration configuration, ILogger<RabbitMqEmailMessagePublisher> logger) : IEmailMessagePublisher, IAsyncDisposable
+public sealed class RabbitMqEmailMessagePublisher(IEmailBrokerTransport transport) : IEmailMessagePublisher
 {
+    private const string DefaultExchange = "email-send-requests-publisher";
+    private const string DefaultRoutingKey = "email-send-requests";
+
+    public async Task PublishAsync(EmailSendRequested message, CancellationToken cancellationToken)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(message);
+        var properties = new BasicProperties
+        {
+            Persistent = true,
+            ContentType = "application/json",
+            MessageId = message.RequestId.ToString("D")
+        };
+        await transport.PublishAsync(DefaultExchange, DefaultRoutingKey, properties, body, cancellationToken);
+    }
+}
+
+public sealed class RabbitMqEmailBrokerTransport : IEmailBrokerTransport, IAsyncDisposable
+{
+    private readonly IConfiguration configuration;
+    private readonly ILogger<RabbitMqEmailBrokerTransport> logger;
+    private readonly Func<ConnectionFactory, CancellationToken, Task<IConnection>> createConnection;
     private readonly SemaphoreSlim gate = new(1, 1);
     private IConnection? connection;
     private IChannel? channel;
 
-    public async Task PublishAsync(EmailSendRequested message, CancellationToken cancellationToken)
+    public RabbitMqEmailBrokerTransport(IConfiguration configuration, ILogger<RabbitMqEmailBrokerTransport> logger)
+        : this(configuration, logger, static (factory, cancellationToken) => factory.CreateConnectionAsync(cancellationToken)) { }
+
+    public RabbitMqEmailBrokerTransport(
+        IConfiguration configuration,
+        ILogger<RabbitMqEmailBrokerTransport> logger,
+        Func<ConnectionFactory, CancellationToken, Task<IConnection>> createConnection)
+    {
+        this.configuration = configuration;
+        this.logger = logger;
+        this.createConnection = createConnection;
+    }
+
+    public async Task PublishAsync(string exchange, string routingKey, BasicProperties properties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
     {
         await gate.WaitAsync(cancellationToken);
         try
         {
             await EnsureConnectedAsync(cancellationToken);
-            var body = JsonSerializer.SerializeToUtf8Bytes(message);
-            var properties = new BasicProperties
-            {
-                Persistent = true,
-                ContentType = "application/json",
-                MessageId = message.RequestId.ToString("D")
-            };
-            await channel!.BasicPublishAsync(string.Empty, QueueName(), mandatory: true, properties, body, cancellationToken);
+            await channel!.BasicPublishAsync(exchange, routingKey, mandatory: true, properties, body, cancellationToken);
         }
         catch
         {
@@ -123,13 +155,10 @@ public sealed class RabbitMqEmailMessagePublisher(IConfiguration configuration, 
             NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
             RequestedConnectionTimeout = TimeSpan.FromSeconds(2)
         };
-        connection = await factory.CreateConnectionAsync(cancellationToken);
+        connection = await createConnection(factory, cancellationToken);
         channel = await connection.CreateChannelAsync(
             new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true, null, null), cancellationToken);
-        await channel.QueueDeclareAsync(QueueName(), durable: true, exclusive: false, autoDelete: false, arguments: null, cancellationToken: cancellationToken);
     }
-
-    private string QueueName() => configuration["RabbitMQ:EmailCommandQueue"] ?? "email.send.requested.v1";
 
     private async Task ResetConnectionAsync()
     {
