@@ -156,6 +156,7 @@ public sealed class PasswordRecoveryUseCase(IAuthIdentityPort users, IAuthDataPo
         var now = clock.GetUtcNow();
         grant.UsedAt = now;
         await data.RevokeActiveRefreshSessionsAsync(user.Id, now, cancellationToken);
+        outbox.Enqueue(user.Email, "auth-password-changed", new Dictionary<string, string> { ["displayName"] = "" });
         data.Add(AuthApplicationUtilities.NewEvent(user.Id, "password_reset_completed", context, now));
         await data.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
