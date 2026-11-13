@@ -53,6 +53,33 @@ public sealed class PasswordRecoveryResetNotificationTests
         Assert.False(transaction.Committed);
     }
 
+    [Fact]
+    public async Task PersistenceFailureRollsBackResetAndQueuedNotification()
+    {
+        var grant = new PasswordResetGrant
+        {
+            Id = Guid.NewGuid(),
+            UserId = "user-id",
+            TokenHash = "hashed-reset-token",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        };
+        var transaction = new RecordingTransaction();
+        var data = new RecordingData(grant, transaction) { FailSave = true };
+        var outbox = new RecordingOutbox(transaction);
+        var useCase = CreateUseCase(new RecordingIdentity(), data, outbox);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => useCase.ResetAsync(
+            new AuthRequestContext("127.0.0.1", "test"),
+            new ResetPasswordRequest("opaque-reset-token", "A-new-secure-password-938!"),
+            CancellationToken.None));
+
+        Assert.Single(outbox.Messages);
+        Assert.True(data.RefreshSessionsRevoked);
+        Assert.False(transaction.Committed);
+        Assert.True(transaction.RolledBack);
+        Assert.True(outbox.EnqueuedBeforeCommit);
+    }
+
     private static PasswordRecoveryUseCase CreateUseCase(RecordingIdentity users, RecordingData data, RecordingOutbox outbox) =>
         new(users, data, outbox, new AllowRateLimit(), new AcceptCaptcha(), new PasswordPolicy(), new TestSettings(), TimeProvider.System);
 
@@ -74,17 +101,24 @@ public sealed class PasswordRecoveryResetNotificationTests
         public bool RolledBack { get; private set; }
         public Task CommitAsync(CancellationToken cancellationToken) { Committed = true; return Task.CompletedTask; }
         public Task RollbackAsync(CancellationToken cancellationToken) { RolledBack = true; return Task.CompletedTask; }
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            if (!Committed && !RolledBack) RolledBack = true;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class RecordingData(PasswordResetGrant? grant, RecordingTransaction transaction) : IAuthDataPort
     {
         public bool RefreshSessionsRevoked { get; private set; }
+        public bool FailSave { get; init; }
         public Task<IAuthTransaction> BeginTransactionAsync(CancellationToken cancellationToken, bool serializable = true) => Task.FromResult<IAuthTransaction>(transaction);
         public Task<PasswordResetGrant?> FindPasswordResetGrantForUpdateAsync(string tokenHash, CancellationToken cancellationToken) => Task.FromResult(grant);
         public Task RevokeActiveRefreshSessionsAsync(string userId, DateTimeOffset revokedAt, CancellationToken cancellationToken) { RefreshSessionsRevoked = true; return Task.CompletedTask; }
         public void Add(AuthEvent authEvent) { }
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => FailSave
+            ? Task.FromException(new InvalidOperationException("simulated persistence failure"))
+            : Task.CompletedTask;
         public Task<EmailVerification?> FindEmailVerificationForUpdateAsync(string tokenHash, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task InvalidateEmailVerificationsAsync(string userId, DateTimeOffset usedAt, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<PasswordResetPin?> FindLatestPasswordResetPinForUpdateAsync(string normalizedEmail, CancellationToken cancellationToken) => throw new NotSupportedException();
