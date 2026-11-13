@@ -93,8 +93,7 @@ public sealed class PasswordRecoveryUseCase(IAuthIdentityPort users, IAuthDataPo
         var normalized = users.NormalizeEmail(user.Email);
         if (normalized is null) throw new InvalidOperationException("Identity could not normalize the account email.");
         data.Add(new PasswordResetPin { Id = Guid.NewGuid(), UserId = user.Id, NormalizedEmail = normalized, PinSalt = salt, PinHash = AuthApplicationUtilities.PinHash(settings, user.Id, salt, pin), CreatedAt = now, ExpiresAt = now.AddMinutes(10) });
-        var pinData = new Dictionary<string, string> { ["displayName"] = "", ["expiresInMinutes"] = "10", ["pinSpaced"] = string.Join(' ', pin), ["pinGrouped"] = pin[..3] + "-" + pin[3..] };
-        outbox.Enqueue(user.Email!, "auth-reset-password-pin", pinData);
+        outbox.Enqueue(user.Email!, "auth-reset-password-pin", AuthApplicationUtilities.ResetPinTemplateData(pin));
         data.Add(AuthApplicationUtilities.NewEvent(user.Id, "password_reset_requested", context, now));
         await data.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -250,6 +249,13 @@ public static class AuthApplicationUtilities
 {
     public static string CreateSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     public static Dictionary<string, string> VerificationTemplateData(string token) => new() { ["token"] = token };
+    public static Dictionary<string, string> ResetPinTemplateData(string pin) => new()
+    {
+        ["displayName"] = "",
+        ["expiresInMinutes"] = "10",
+        ["pinSpaced"] = string.Join(' ', pin.ToCharArray()),
+        ["pinGrouped"] = pin[..3] + "-" + pin[3..]
+    };
     public static string Hash(string raw) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
     public static string PinHash(IAuthSettings settings, string userId, string salt, string pin)
     {

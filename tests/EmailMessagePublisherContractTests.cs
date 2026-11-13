@@ -96,6 +96,39 @@ public sealed class EmailMessagePublisherContractTests
     }
 
     [Fact]
+    public async Task ResetPinPublisherEmitsEmailApiV1WireContract()
+    {
+        const string syntheticPin = "482913";
+        var templateData = CompareShopAuthAPI.Application.AuthApplicationUtilities.ResetPinTemplateData(syntheticPin);
+        var message = new EmailSendRequested("EmailSendRequested", Guid.NewGuid(), 1, "person@example.test", "auth-reset-password-pin", "vi", "auth-reset-password-pin", templateData);
+        var transport = new RecordingTransport();
+        var publisher = new RabbitMqEmailMessagePublisher(transport);
+
+        await publisher.PublishAsync(message, CancellationToken.None);
+
+        Assert.Equal("email-send-requests-publisher", transport.Exchange);
+        Assert.Equal("email-send-requests", transport.RoutingKey);
+        Assert.Equal(message.RequestId.ToString("D"), transport.Properties!.MessageId);
+        Assert.True(transport.Properties.Persistent);
+        Assert.Equal("application/json", transport.Properties.ContentType);
+        using var document = JsonDocument.Parse(transport.Body!);
+        var root = document.RootElement;
+        Assert.Equal("EmailSendRequested", root.GetProperty("messageType").GetString());
+        Assert.Equal(1, root.GetProperty("version").GetInt32());
+        Assert.Equal(message.RequestId.ToString("D"), root.GetProperty("requestId").GetString());
+        Assert.Equal("person@example.test", root.GetProperty("to").GetString());
+        Assert.Equal("auth-reset-password-pin", root.GetProperty("templateKey").GetString());
+        Assert.Equal("vi", root.GetProperty("locale").GetString());
+        Assert.Equal("auth-reset-password-pin", root.GetProperty("subjectKey").GetString());
+        var data = root.GetProperty("templateData");
+        Assert.Equal("", data.GetProperty("displayName").GetString());
+        Assert.Equal("10", data.GetProperty("expiresInMinutes").GetString());
+        Assert.Equal("4 8 2 9 1 3", data.GetProperty("pinSpaced").GetString());
+        Assert.Equal("482-913", data.GetProperty("pinGrouped").GetString());
+        Assert.False(data.TryGetProperty("pin", out _));
+    }
+
+    [Fact]
     public async Task WaitsForBrokerConfirmationAndPropagatesFailureForOutboxRetry()
     {
         var confirmation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
